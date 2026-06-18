@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Frontend ke liye raasta clear (CORS Policy configuration)
+# CORS configuration to allow your GitHub pages website
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,26 +28,29 @@ async def generate_video(payload: VideoRequest):
     if not token:
         raise HTTPException(status_code=500, detail="HF_TOKEN Environment Variable Missing!")
     
-    # Stability AI SVD-XT API Endpoint URL
     hf_url = "https://api-inference.huggingface.co/models/stabilityai/stable-video-diffusion-img2vid-xt"
+    
+    # Simple setup for authorization
     headers = {"Authorization": f"Bearer {token}"}
     
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            # Hugging Face ko call lagayi
+            # Preparing input data
+            input_data = payload.image_url
+            
+            # Hit Hugging Face Inference API
             response = await client.post(
                 hf_url, 
                 headers=headers, 
-                json={"inputs": payload.image_url},
-                headers={"Content-Type": "application/json"} if not payload.image_url.startswith("data:") else None
+                json={"inputs": input_data}
             )
             
             if response.status_code == 503:
                 raise HTTPException(status_code=503, detail="Model Loading on Hugging Face. Please retry.")
             elif response.status_code != 200:
-                raise HTTPException(status_code=response.status_code, detail="Hugging Face Node Error")
+                raise HTTPException(status_code=response.status_code, detail=f"Hugging Face Error: {response.text}")
             
-            # Binary content ko Hex format string me badla frontend compatibility ke liye
+            # Convert bytes content to hex string for easy frontend handling
             video_hex = response.content.hex()
             return {"video_bytes": video_hex}
             
