@@ -1,10 +1,12 @@
 import os
-import requests
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="Vidtor AI Cloud Core Engine")
+app = FastAPI()
+
+# Frontend ke liye raasta clear (CORS Policy configuration)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,33 +15,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-HF_TOKEN = os.getenv("HF_TOKEN")
-API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-video-diffusion-img2vid-xt"
-
-class VideoPayload(BaseModel):
+class VideoRequest(BaseModel):
     image_url: str
 
 @app.get("/")
-def health_check():
-    return {"status": "Vidtor AI Neural Network is Online", "engine": "SVD-XT"}
+def read_root():
+    return {"status": "Vidtor Engine Live Node Active"}
 
 @app.post("/v1/generate-video")
-async def generate_video(payload: VideoPayload):
-    if not HF_TOKEN:
-        raise HTTPException(status_code=500, detail="Cloud Secret Token is missing!")
+async def generate_video(payload: VideoRequest):
+    token = os.getenv("HF_TOKEN")
+    if not token:
+        raise HTTPException(status_code=500, detail="HF_TOKEN Environment Variable Missing!")
+    
+    # Stability AI SVD-XT API Endpoint URL
+    hf_url = "https://api-inference.huggingface.co/models/stabilityai/stable-video-diffusion-img2vid-xt"
+    headers = {"Authorization": f"Bearer {token}"}
     
     try:
-        img_response = requests.get(payload.image_url)
-        if img_response.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to fetch image from URL")
-        
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        ai_response = requests.post(API_URL, headers=headers, data=img_response.content)
-        
-        if ai_response.status_code != 200:
-            raise HTTPException(status_code=ai_response.status_code, detail="AI Node busy or overloaded")
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # Hugging Face ko call lagayi
+            response = await client.post(
+                hf_url, 
+                headers=headers, 
+                json={"inputs": payload.image_url},
+                headers={"Content-Type": "application/json"} if not payload.image_url.startswith("data:") else None
+            )
             
-        return {"video_bytes": ai_response.content.hex(), "status": "success"}
-        
+            if response.status_code == 503:
+                raise HTTPException(status_code=503, detail="Model Loading on Hugging Face. Please retry.")
+            elif response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail="Hugging Face Node Error")
+            
+            # Binary content ko Hex format string me badla frontend compatibility ke liye
+            video_hex = response.content.hex()
+            return {"video_bytes": video_hex}
+            
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
